@@ -1,0 +1,464 @@
+#!/bin/bash
+
+export API="https://api.cloudflare.com/client/v4"
+
+#######################################
+# DEFAULTS
+#######################################
+cfApiToken=""
+cfAccountId=""
+flagName=""
+cfZoneId=""
+merge=""
+command=""
+
+#######################################
+# HELP
+#######################################
+function usage() {
+  cat <<EOF
+Cloudinator 1.1 - copyright Jean-Philippe Guillemin <hyp3ri0n@sfr.fr> - GPL v2
+______________________________________________________________________________
+Usage: $0 [OPTIONS]
+
+Options:
+  dump                      Dump configuration to JSON files
+  terraform                 Generate Terraform configuration files
+  --name <flag_name>        Config flag name (used for output directory)
+  --account <account_id>    Cloudflare account ID (REQUIRED)
+  --zone <zone_id>          Limit dump to a specific zone (REQUIRED for Terraform)
+  --token <api_token>       Cloudflare API token (REQUIRED)
+  --merge                   Create ONE big JSON
+  --help                    Show this help
+
+Examples:
+  $0 dump --name Metsys --token XXX --account YYY
+  $0 terraform --token XXX --zone ZZZ
+  $0 dump --token XXX --account YYY --zone ZZZ
+EOF
+  exit 1
+}
+
+#######################################
+# ARG PARSING
+#######################################
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    terraform)
+      command="${command}T"
+      shift
+      ;;
+    dump)
+      command="${command}D"
+      shift
+      ;;
+    --name)
+      flagName="$2"
+      shift 2
+      ;;
+    --token)
+      cfApiToken="$2"
+      shift 2
+      ;;
+    --account)
+      cfAccountId="$2"
+      shift 2
+      ;;
+    --zone)
+      cfZoneId="$2"
+      shift 2
+      ;;
+    --merge)
+      merge="true"
+      shift
+      ;;
+    --help)
+      usage
+      ;;
+    *)
+      echo "Unknown option: $1"
+      usage
+      ;;
+  esac
+done
+
+[[ -z "$flagName" ]] && flagName="Cloudinator"
+
+
+
+#######################################
+# INITIALIZATION
+#######################################
+
+if [[ -z "$cfApiToken" ]]; then
+  echo "ERROR: --token is required"
+  exit 1
+fi
+
+outDirectory="cf-$flagName-$(date +%Y%m%d)"
+# rm -rf "$outDirectory"
+mkdir -p "$outDirectory"
+
+
+function fetchApi() {
+  curl -s -H "Authorization: Bearer $cfApiToken" \
+       -H "Content-Type: application/json" \
+       "${API}/${1}"
+}
+
+#######################################
+# ACCOUNT DUMP
+#######################################
+function dumpAccount() {
+
+  if [[ -z "$cfAccountId" ]]; then
+    echo "ERROR: --account is required"
+    exit 1
+  fi
+
+  echo "===== ACCOUNT LEVEL DUMP ====="
+
+  fetchApi "accounts/$cfAccountId" | jq . > "$outDirectory/account.json"
+  fetchApi "accounts/$cfAccountId/rulesets" | jq . > "$outDirectory/account_rulesets.json"
+  fetchApi "accounts/$cfAccountId/workers/scripts" | jq . > "$outDirectory/workers_scripts.json"
+  fetchApi "accounts/$cfAccountId/storage/kv/namespaces" | jq . > "$outDirectory/workers_kv.json"
+
+  fetchApi "accounts/$cfAccountId/cfd_tunnel" | jq . > "$outDirectory/tunnels.json"
+
+  mkdir -p "$outDirectory/tunnels"
+
+  for tunnel in $(jq -r '.result[].id' "$outDirectory/tunnels.json" 2>/dev/null); do
+    fetchApi "accounts/$cfAccountId/cfd_tunnel/$tunnel" | jq . > "$outDirectory/tunnels/$tunnel.json"
+    fetchApi "accounts/$cfAccountId/cfd_tunnel/$tunnel/configurations" | jq . > "$outDirectory/tunnels/$tunnel-config.json"
+  done
+
+  fetchApi "accounts/$cfAccountId/access/apps" | jq . > "$outDirectory/access_apps.json"
+  fetchApi "accounts/$cfAccountId/access/policies" | jq . > "$outDirectory/access_policies.json"
+
+  fetchApi "accounts/$cfAccountId/load_balancers/monitors" | jq . > "$outDirectory/lb_monitors.json"
+  fetchApi "accounts/$cfAccountId/load_balancers/pools" | jq . > "$outDirectory/lb_pools.json"
+
+}
+
+#######################################
+# ZONES DUMP
+#######################################
+
+function dumpZones() {
+
+  if [[ ! "$(which jq)" ]]; then
+    echo "ERROR: Please install jq ! boudiou !"
+    exit 1
+  fi
+
+  echo "===== ZONES DUMP ====="
+
+  # Get all zones OR just the one specified in $cfZoneId
+  if [[ -n "$cfZoneId" ]]; then
+    echo "{\"result\":[{\"id\":\"$cfZoneId\"}]}" > "$outDirectory/zones.json"
+  else
+    fetchApi "zones?per_page=100" | jq . > "$outDirectory/zones.json"
+  fi
+  zones=$(jq -r '.result[].id' "$outDirectory/zones.json")
+
+  for zone in ${zones}; do
+    echo "ZONE $zone"
+
+    mkdir -p "$outDirectory/zones/$zone"
+
+    fetchApi "zones/$zone" | jq . > "$outDirectory/zones/$zone/zone.json"
+    fetchApi "zones/$zone/settings" | jq . > "$outDirectory/zones/$zone/settings.json"
+    fetchApi "zones/$zone/dns_records?per_page=5000" | jq . > "$outDirectory/zones/$zone/dns_records.json"
+
+    fetchApi "zones/$zone/pagerules" | jq . > "$outDirectory/zones/$zone/page_rules.json"
+    fetchApi "zones/$zone/firewall/rules" | jq . > "$outDirectory/zones/$zone/firewall_rules.json"
+    fetchApi "zones/$zone/firewall/access_rules/rules" | jq . > "$outDirectory/zones/$zone/access_rules.json"
+    fetchApi "zones/$zone/firewall/ua_rules" | jq . > "$outDirectory/zones/$zone/ua_rules.json"
+    fetchApi "zones/$zone/bot_management" | jq . > "$outDirectory/zones/$zone/bot_management.json"
+
+    fetchApi "zones/$zone/workers/routes" | jq . > "$outDirectory/zones/$zone/workers_routes.json"
+
+    fetchApi "zones/$zone/load_balancers" | jq . > "$outDirectory/zones/$zone/load_balancers.json"
+    fetchApi "zones/$zone/rulesets" | jq . > "$outDirectory/zones/$zone/rulesets.json"
+
+  done
+
+  echo "EXPORT FINISHED"
+  echo "Directory: $outDirectory"
+
+}
+
+function mergeConfig() {
+
+  if [[ ! "$(which jq)" ]]; then
+    echo "ERROR: Please install jq ! boudiou !"
+    exit 1
+  fi
+
+  echo "===== MERGING ALL JSON INTO ONE MAIN FILE ====="
+
+  mainJson="$outDirectory/cloudflare_full_config.json"
+  tmpFile=$(mktemp)
+
+  #######################################
+  # INIT ROOT STRUCTURE
+  #######################################
+  jq -n '{
+    account: {},
+    account_rulesets: {},
+    workers: {},
+    tunnels: {},
+    access: {},
+    load_balancing: {},
+    zones: {}
+  }' > "$mainJson"
+
+  #######################################
+  # ACCOUNT MERGE
+  #######################################
+
+    echo "Merging account-level data..."
+
+    jq \
+      --slurpfile account "$outDirectory/account.json" \
+      --slurpfile rulesets "$outDirectory/account_rulesets.json" \
+      --slurpfile workers "$outDirectory/workers_scripts.json" \
+      --slurpfile kv "$outDirectory/workers_kv.json" \
+      --slurpfile tunnels "$outDirectory/tunnels.json" \
+      --slurpfile access_apps "$outDirectory/access_apps.json" \
+      --slurpfile access_policies "$outDirectory/access_policies.json" \
+      --slurpfile lb_monitors "$outDirectory/lb_monitors.json" \
+      --slurpfile lb_pools "$outDirectory/lb_pools.json" \
+      '
+      .account = $account[0] |
+      .account_rulesets = $rulesets[0] |
+      .workers = {
+        scripts: $workers[0],
+        kv: $kv[0]
+      } |
+      .tunnels = $tunnels[0] |
+      .access = {
+        apps: $access_apps[0],
+        policies: $access_policies[0]
+      } |
+      .load_balancing = {
+        monitors: $lb_monitors[0],
+        pools: $lb_pools[0]
+      }
+      ' "$mainJson" > "$tmpFile" && mv "$tmpFile" "$mainJson"
+
+
+  #######################################
+  # ZONES MERGE
+  #######################################
+  echo "Merging zones..."
+
+  for zone in $(jq -r '.result[].id' "$outDirectory/zones.json"); do
+
+    zoneDir="$outDirectory/zones/$zone"
+    echo "Merging zone $zone"
+
+    jq \
+      --arg zone "$zone" \
+      --slurpfile zoneinfo "$zoneDir/zone.json" \
+      --slurpfile dns "$zoneDir/dns_records.json" \
+      --slurpfile settings "$zoneDir/settings.json" \
+      --slurpfile pagerules "$zoneDir/page_rules.json" \
+      --slurpfile fw "$zoneDir/firewall_rules.json" \
+      --slurpfile access "$zoneDir/access_rules.json" \
+      --slurpfile ua "$zoneDir/ua_rules.json" \
+      --slurpfile bot "$zoneDir/bot_management.json" \
+      --slurpfile workers "$zoneDir/workers_routes.json" \
+      --slurpfile lb "$zoneDir/load_balancers.json" \
+      --slurpfile rulesets "$zoneDir/rulesets.json" \
+      '
+      .zones[$zone] = {
+        zone: $zoneinfo[0],
+        dns_records: $dns[0],
+        settings: $settings[0],
+        page_rules: $pagerules[0],
+        firewall_rules: $fw[0],
+        access_rules: $access[0],
+        ua_rules: $ua[0],
+        bot_management: $bot[0],
+        workers_routes: $workers[0],
+        load_balancers: $lb[0],
+        rulesets: $rulesets[0]
+      }
+      ' "$mainJson" > "$tmpFile" && mv "$tmpFile" "$mainJson"
+
+  done
+
+  echo "Merged JSON created: $mainJson"
+
+}
+
+#######################################
+# TERRAFORM
+#######################################
+
+function add_import() {
+  local resource=$1
+  local name=$2
+  local id=$3
+  cat >> import.tf <<EOF
+
+import {
+  to = ${resource}.${name}
+  id = "${id}"
+}
+EOF
+}
+
+function createTerraform() {
+
+  if [[ ! "$(which terraform)" ]]; then
+    echo "ERROR: Please install Terraform ! boudiou !"
+    exit 1
+  fi
+  if [[ ! "$(which jq)" ]]; then
+    echo "ERROR: Please install jq ! boudiou !"
+    exit 1
+  fi
+  if [[ -z "$cfZoneId" ]]; then
+    echo "ERROR: --zone is required for terraform"
+    exit 1
+  fi
+  if [[ -z "$cfAccountId" ]]; then
+    echo "ERROR: --account is required for terraform"
+    exit 1
+  fi
+
+  echo "===== GENERATING TERRAFORM ====="
+
+  mkdir -p "$outDirectory/terraform"
+  cd "$outDirectory/terraform"
+
+  # Clean previous run
+  rm -f *.tf import.tf
+
+  cat > main.tf <<EOF
+terraform {
+  required_providers {
+    cloudflare = {
+      source  = "cloudflare/cloudflare"
+      version = "~> 4.0"
+    }
+  }
+}
+provider "cloudflare" {}
+EOF
+
+  export CLOUDFLARE_API_TOKEN=$cfApiToken
+  terraform init
+
+  # ── DNS records ─────────────────────────────────────────────────────────────
+  echo "Fetching DNS records..."
+  fetchApi "zones/$cfZoneId/dns_records?per_page=500" \
+    | jq -r '.result[] | .id' \
+    | while read id; do
+        add_import "cloudflare_record" "record_$id" "$cfZoneId/$id"
+      done
+
+  # ── Rulesets ─────────────────────────────────────────────────────────────────
+  echo "Fetching rulesets..."
+  fetchApi "zones/$cfZoneId/rulesets" \
+    | jq -r '.result[] | .id' \
+    | while read id; do
+        add_import "cloudflare_ruleset" "ruleset_$id" "zone/$cfZoneId/$id"
+      done
+
+  # ── Load balancers ────────────────────────────────────────────────────────────
+  echo "Fetching load balancers..."
+  fetchApi "zones/$cfZoneId/load_balancers" \
+    | jq -r '.result[] | .id' \
+    | while read id; do
+        add_import "cloudflare_load_balancer" "lb_$id" "$cfZoneId/$id"
+      done
+
+  # ── LB Pools ──────────────────────────────────────────────────────────────────
+  echo "Fetching LB pools..."
+  fetchApi "accounts/$cfAccountId/load_balancers/pools" \
+    | jq -r '.result[] | .id' \
+    | while read id; do
+        add_import "cloudflare_load_balancer_pool" "pool_$id" "$cfAccountId/$id"
+      done
+
+  # ── LB Monitors ───────────────────────────────────────────────────────────────
+  echo "Fetching LB monitors..."
+  fetchApi "accounts/$cfAccountId/load_balancers/monitors" \
+    | jq -r '.result[] | .id' \
+    | while read id; do
+        add_import "cloudflare_load_balancer_monitor" "monitor_$id" "$cfAccountId/$id"
+      done
+
+  # ── Healthchecks ──────────────────────────────────────────────────────────────
+  echo "Fetching healthchecks..."
+  fetchApi "zones/$cfZoneId/healthchecks" \
+    | jq -r '.result[] | .id' \
+    | while read id; do
+        add_import "cloudflare_healthcheck" "healthcheck_$id" "$cfZoneId/$id"
+      done
+
+  # ── Certificate packs ─────────────────────────────────────────────────────────
+  echo "Fetching certificate packs..."
+  fetchApi "zones/$cfZoneId/ssl/certificate_packs" \
+    | jq -r '.result[] | .id' \
+    | while read id; do
+        add_import "cloudflare_certificate_pack" "cert_$id" "$cfZoneId/$id"
+      done
+
+  # ── Tunnels ───────────────────────────────────────────────────────────────────
+  echo "Fetching tunnels..."
+  fetchApi "accounts/$cfAccountId/cfd_tunnel?per_page=50" \
+    | jq -r '.result[] | .id' \
+    | while read id; do
+        add_import "cloudflare_zero_trust_tunnel_cloudflared" "tunnel_$id" "$cfAccountId/$id"
+        add_import "cloudflare_zero_trust_tunnel_cloudflared_config" "tunnel_config_$id" "$cfAccountId/$id"
+      done
+
+  # ── Page rules ────────────────────────────────────────────────────────────────
+  echo "Fetching page rules..."
+  fetchApi "zones/$cfZoneId/pagerules" \
+    | jq -r '.result[] | .id' \
+    | while read id; do
+        add_import "cloudflare_page_rule" "pagerule_$id" "$cfZoneId/$id"
+      done
+
+  # ── Worker routes ─────────────────────────────────────────────────────────────
+  echo "Fetching worker routes..."
+  fetchApi "zones/$cfZoneId/workers/routes" \
+    | jq -r '.result[] | .id' \
+    | while read id; do
+        add_import "cloudflare_worker_route" "worker_route_$id" "$cfZoneId/$id"
+      done
+
+  # ── Generate HCL + state ──────────────────────────────────────────────────────
+  echo "Generating Terraform config and state..."
+  terraform plan -generate-config-out=generated-$cfZoneId.tf -out=plan.bin
+  terraform apply plan.bin
+
+  echo ""
+  echo "===== VERIFYING STATE ====="
+  terraform plan
+
+}
+
+case "$command" in
+  *D*)
+    dumpAccount
+    dumpZones
+    [[ "$merge" == "true" ]] && mergeConfig
+    ;;
+  *T*)
+    createTerraform
+    ;;
+  *)
+    echo "No command specified"
+    usage
+    ;;
+esac
+
+exit
+
+
