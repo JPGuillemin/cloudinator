@@ -1,7 +1,5 @@
 # Cloudinator
-Cloudinator dump Cloudflare config in JSON or TERRAFORM
-
-# Cloudinator
+Cloudinator dumps Cloudflare config into JSON or TERRAFORM
 
 Cloudinator is a tool that exports a full **Cloudflare account and zone configuration** and optionally converts it into **Terraform-managed infrastructure**.
 
@@ -99,7 +97,7 @@ Supported resources:
 
 # Requirements
 
-Required tools:
+Required dependancies:
 
 ```
 bash
@@ -127,7 +125,7 @@ Clone the repository:
 ```bash
 git clone https://github.com/YOUR_USERNAME/cloudinator.git
 cd cloudinator
-chmod +x cloudinator.sh
+chmod +x cloudinator
 ```
 
 ---
@@ -164,7 +162,7 @@ https://dash.cloudflare.com/profile/api-tokens
 # Usage
 
 ```
-./cloudinator.sh [command] [options]
+./cloudinator [command] [options]
 ```
 
 ---
@@ -176,13 +174,13 @@ https://dash.cloudflare.com/profile/api-tokens
 Export account and zone configuration.
 
 ```
-./cloudinator.sh dump --token TOKEN --account ACCOUNT_ID
+./cloudinator dump --token TOKEN --account ACCOUNT_ID
 ```
 
 Example:
 
 ```bash
-./cloudinator.sh dump \
+./cloudinator dump \
   --name MyInfra \
   --token CF_TOKEN \
   --account ACCOUNT_ID
@@ -199,7 +197,7 @@ cf-MyInfra-YYYYMMDD/
 ## Dump a single zone
 
 ```
-./cloudinator.sh dump \
+./cloudinator dump \
   --token TOKEN \
   --account ACCOUNT_ID \
   --zone ZONE_ID
@@ -210,7 +208,7 @@ cf-MyInfra-YYYYMMDD/
 ## Merge everything into one JSON
 
 ```
-./cloudinator.sh dump \
+./cloudinator dump \
   --token TOKEN \
   --account ACCOUNT_ID \
   --merge
@@ -227,7 +225,7 @@ cloudflare_full_config.json
 ## Generate Terraform configuration
 
 ```
-./cloudinator.sh terraform \
+./cloudinator terraform \
   --token TOKEN \
   --account ACCOUNT_ID \
   --zone ZONE_ID
@@ -262,7 +260,7 @@ import.tf
 ## 1. Dump configuration
 
 ```bash
-./cloudinator.sh dump \
+./cloudinator dump \
   --name Production \
   --token CF_TOKEN \
   --account ACCOUNT_ID
@@ -271,7 +269,7 @@ import.tf
 ## 2. Backup entire configuration
 
 ```bash
-./cloudinator.sh dump \
+./cloudinator dump \
   --token CF_TOKEN \
   --account ACCOUNT_ID \
   --merge
@@ -280,7 +278,7 @@ import.tf
 ## 3. Convert infrastructure to Terraform
 
 ```bash
-./cloudinator.sh terraform \
+./cloudinator terraform \
   --token CF_TOKEN \
   --account ACCOUNT_ID \
   --zone ZONE_ID

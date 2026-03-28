@@ -310,6 +310,138 @@ import {
 EOF
 }
 
+function getRecords() {
+  # ── DNS records ─────────────────────────────────────────────────────────────
+  echo "Fetching DNS records..."
+  fetchApi "zones/$cfZoneId/dns_records?per_page=5000" \
+    | jq -r '.result[] | .id' \
+    | while read id; do
+        add_import "cloudflare_record" "record_$id" "$cfZoneId/$id"
+      done
+  fetchApi "zones/$cfZoneId/dns_records?per_page=5000" | \
+  jq -r --arg zone_id "$cfZoneId" '
+  .result | to_entries | .[] |
+"resource \"cloudflare_record\" \"record_\(.value.id)\" {
+  content = \"\(.value.content)\"
+  name    = \"\(.value.name | split(".")[0])\"
+  proxied = \(.value.proxied)
+  ttl     = \(.value.ttl)
+  type    = \"\(.value.type)\"
+  zone_id = \"\($zone_id)\"
+}"' > dns-records-$cfZoneId.tf
+}
+
+function getWafCustomRules() {
+  echo "Fetching WAF custom ruleset..."
+
+  # Get the ruleset ID
+  rulesetId=$(fetchApi "zones/$cfZoneId/rulesets/phases/http_request_firewall_custom/entrypoint" \
+    | jq -r '.result.id')
+
+  if [ -n "$rulesetId" ] && [ "$rulesetId" != "null" ]; then
+    echo "Found ruleset: $rulesetId"
+
+    # Correct import format: zone/zone_id/ruleset_id
+    add_import "cloudflare_ruleset" "waf_custom_rules" "zone/$cfZoneId/$rulesetId"
+    terraform plan -generate-config-out=waf-custom-rules-$cfZoneId.tf
+  else
+    echo "No WAF custom ruleset found"
+  fi
+}
+
+function getLoadBalancers() {
+  # ── Load balancers ────────────────────────────────────────────────────────────
+  echo "Fetching load balancers..."
+  fetchApi "zones/$cfZoneId/load_balancers" \
+    | jq -r '.result[] | .id' \
+    | while read id; do
+        add_import "cloudflare_load_balancer" "lb_$id" "$cfZoneId/$id"
+      done
+  terraform plan -generate-config-out=load-balancers-$cfZoneId.tf
+  sed -i '/ttl.*= 0$/d' load-balancers-$cfZoneId.tf
+}
+
+function getLbPools() {
+  # ── LB Pools ──────────────────────────────────────────────────────────────────
+  echo "Fetching LB pools..."
+  fetchApi "accounts/$cfAccountId/load_balancers/pools" \
+    | jq -r '.result[] | .id' \
+    | while read id; do
+        add_import "cloudflare_load_balancer_pool" "pool_$id" "$cfAccountId/$id"
+      done
+  terraform plan -generate-config-out=load-balancers-pools-$cfAccountId.tf
+}
+
+function getLbMonitors() {
+  # ── LB Monitors ───────────────────────────────────────────────────────────────
+  echo "Fetching LB monitors..."
+  fetchApi "accounts/$cfAccountId/load_balancers/monitors" \
+    | jq -r '.result[] | .id' \
+    | while read id; do
+        add_import "cloudflare_load_balancer_monitor" "monitor_$id" "$cfAccountId/$id"
+      done
+  terraform plan -generate-config-out=load-balancers-monitors-$cfAccountId.tf
+}
+
+function getHealthchecks() {
+  # ── Healthchecks ──────────────────────────────────────────────────────────────
+  echo "Fetching healthchecks..."
+  fetchApi "zones/$cfZoneId/healthchecks" \
+    | jq -r '.result[] | .id' \
+    | while read id; do
+        add_import "cloudflare_healthcheck" "healthcheck_$id" "$cfZoneId/$id"
+      done
+  terraform plan -generate-config-out=healthchecks-$cfAccountId.tf
+}
+
+function getCertificates() {
+  # ── Certificate packs ─────────────────────────────────────────────────────────
+  echo "Fetching certificate packs..."
+  fetchApi "zones/$cfZoneId/ssl/certificate_packs" \
+    | jq -r '.result[] | .id' \
+    | while read id; do
+        add_import "cloudflare_certificate_pack" "cert_$id" "$cfZoneId/$id"
+      done
+  terraform plan -generate-config-out=certificates-$cfAccountId.tf
+}
+
+function getTunnels() {
+  # ── Tunnels ───────────────────────────────────────────────────────────────────
+  echo "Fetching tunnel configs..."
+  fetchApi "accounts/$cfAccountId/cfd_tunnel?per_page=50" \
+    | jq -r '.result[] | .id' \
+    | while read id; do
+        # Only import configs, not tunnels themselves
+        add_import "cloudflare_zero_trust_tunnel_cloudflared_config" "tunnel_config_$id" "$cfAccountId/$id"
+      done
+  terraform plan -generate-config-out=tunnels-$cfAccountId.tf
+  # Fix missing ingress_rule
+  sed -i '/^  config {$/,/^  }$/ { /warp_routing {/i\    ingress_rule {\n      service  = "http_status:503"\n    }
+  }' tunnels-$cfAccountId.tf
+}
+
+function getPageRules() {
+  # ── Page rules ────────────────────────────────────────────────────────────────
+  echo "Fetching page rules..."
+  fetchApi "zones/$cfZoneId/pagerules" \
+    | jq -r '.result[] | .id' \
+    | while read id; do
+        add_import "cloudflare_page_rule" "pagerule_$id" "$cfZoneId/$id"
+      done
+  terraform plan -generate-config-out=page-rules-$cfAccountId.tf
+}
+
+function getWorkerRoutes() {
+  # ── Worker routes ─────────────────────────────────────────────────────────────
+  echo "Fetching worker routes..."
+  fetchApi "zones/$cfZoneId/workers/routes" \
+    | jq -r '.result[] | .id' \
+    | while read id; do
+        add_import "cloudflare_worker_route" "worker_route_$id" "$cfZoneId/$id"
+      done
+  terraform plan -generate-config-out=worker-routes-$cfAccountId.tf
+}
+
 function createTerraform() {
 
   if [[ ! "$(which terraform)" ]]; then
@@ -330,10 +462,9 @@ function createTerraform() {
   fi
 
   echo "===== GENERATING TERRAFORM ====="
-
+  export CLOUDFLARE_API_TOKEN=$cfApiToken
   mkdir -p "$outDirectory/terraform"
   cd "$outDirectory/terraform"
-
   # Clean previous run
   rm -f *.tf import.tf
 
@@ -349,93 +480,22 @@ terraform {
 provider "cloudflare" {}
 EOF
 
-  export CLOUDFLARE_API_TOKEN=$cfApiToken
   terraform init
-
-  # ── DNS records ─────────────────────────────────────────────────────────────
-  echo "Fetching DNS records..."
-  fetchApi "zones/$cfZoneId/dns_records?per_page=500" \
-    | jq -r '.result[] | .id' \
-    | while read id; do
-        add_import "cloudflare_record" "record_$id" "$cfZoneId/$id"
-      done
-
-  # ── Rulesets ─────────────────────────────────────────────────────────────────
-  echo "Fetching rulesets..."
-  fetchApi "zones/$cfZoneId/rulesets" \
-    | jq -r '.result[] | .id' \
-    | while read id; do
-        add_import "cloudflare_ruleset" "ruleset_$id" "zone/$cfZoneId/$id"
-      done
-
-  # ── Load balancers ────────────────────────────────────────────────────────────
-  echo "Fetching load balancers..."
-  fetchApi "zones/$cfZoneId/load_balancers" \
-    | jq -r '.result[] | .id' \
-    | while read id; do
-        add_import "cloudflare_load_balancer" "lb_$id" "$cfZoneId/$id"
-      done
-
-  # ── LB Pools ──────────────────────────────────────────────────────────────────
-  echo "Fetching LB pools..."
-  fetchApi "accounts/$cfAccountId/load_balancers/pools" \
-    | jq -r '.result[] | .id' \
-    | while read id; do
-        add_import "cloudflare_load_balancer_pool" "pool_$id" "$cfAccountId/$id"
-      done
-
-  # ── LB Monitors ───────────────────────────────────────────────────────────────
-  echo "Fetching LB monitors..."
-  fetchApi "accounts/$cfAccountId/load_balancers/monitors" \
-    | jq -r '.result[] | .id' \
-    | while read id; do
-        add_import "cloudflare_load_balancer_monitor" "monitor_$id" "$cfAccountId/$id"
-      done
-
-  # ── Healthchecks ──────────────────────────────────────────────────────────────
-  echo "Fetching healthchecks..."
-  fetchApi "zones/$cfZoneId/healthchecks" \
-    | jq -r '.result[] | .id' \
-    | while read id; do
-        add_import "cloudflare_healthcheck" "healthcheck_$id" "$cfZoneId/$id"
-      done
-
-  # ── Certificate packs ─────────────────────────────────────────────────────────
-  echo "Fetching certificate packs..."
-  fetchApi "zones/$cfZoneId/ssl/certificate_packs" \
-    | jq -r '.result[] | .id' \
-    | while read id; do
-        add_import "cloudflare_certificate_pack" "cert_$id" "$cfZoneId/$id"
-      done
-
-  # ── Tunnels ───────────────────────────────────────────────────────────────────
-  echo "Fetching tunnels..."
-  fetchApi "accounts/$cfAccountId/cfd_tunnel?per_page=50" \
-    | jq -r '.result[] | .id' \
-    | while read id; do
-        add_import "cloudflare_zero_trust_tunnel_cloudflared" "tunnel_$id" "$cfAccountId/$id"
-        add_import "cloudflare_zero_trust_tunnel_cloudflared_config" "tunnel_config_$id" "$cfAccountId/$id"
-      done
-
-  # ── Page rules ────────────────────────────────────────────────────────────────
-  echo "Fetching page rules..."
-  fetchApi "zones/$cfZoneId/pagerules" \
-    | jq -r '.result[] | .id' \
-    | while read id; do
-        add_import "cloudflare_page_rule" "pagerule_$id" "$cfZoneId/$id"
-      done
-
-  # ── Worker routes ─────────────────────────────────────────────────────────────
-  echo "Fetching worker routes..."
-  fetchApi "zones/$cfZoneId/workers/routes" \
-    | jq -r '.result[] | .id' \
-    | while read id; do
-        add_import "cloudflare_worker_route" "worker_route_$id" "$cfZoneId/$id"
-      done
-
   # ── Generate HCL + state ──────────────────────────────────────────────────────
-  echo "Generating Terraform config and state..."
-  terraform plan -generate-config-out=generated-$cfZoneId.tf -out=plan.bin
+  echo "===== FETCHING RESOURCES ====="
+  getRecords
+  getWafCustomRules
+  # getLbPools
+  # getLbMonitors
+  # getLoadBalancers
+  # getCertificates
+  # getTunnels
+  # getPageRules
+  # getHealthchecks
+  # getPageRules
+
+  echo "===== PLAN ====="
+  terraform plan -out=plan.bin
   terraform apply plan.bin
 
   echo ""
