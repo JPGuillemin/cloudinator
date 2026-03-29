@@ -475,18 +475,6 @@ function getHealthchecks() {
   fi
 }
 
-function getCertificates() {
-  echo "Fetching certificate packs..."
-  result=$(fetchApi "zones/$cfZoneId/ssl/certificate_packs")
-  if echo "$result" | jq -e '.result[]' > /dev/null 2>&1; then
-    echo "$result" | jq -r '.result[] | .id' \
-      | while read id; do
-          getTfImport "cloudflare_certificate_pack" "cert_$id" "$cfZoneId/$id"
-        done
-    getTfConfig certificates-$cfZoneId.tf
-  fi
-}
-
 function getTunnels() {
   echo "Fetching tunnel configs..."
   result=$(fetchApi "accounts/$cfAccountId/cfd_tunnel?per_page=50")
@@ -522,6 +510,39 @@ function getWorkerRoutes() {
           getTfImport "cloudflare_worker_route" "worker_route_$id" "$cfZoneId/$id"
         done
     getTfConfig worker-routes-$cfZoneId.tf
+  fi
+}
+
+function getWafManagedRulesetOverrides() {
+  echo "Fetching WAF managed ruleset overrides (OWASP & Cloudflare Managed)..."
+  # Get the ruleset ID for managed WAF overrides
+  rulesetId=$(fetchApi "zones/$cfZoneId/rulesets/phases/http_request_firewall_managed/entrypoint" \
+    | jq -r '.result.id')
+  if [ -n "$rulesetId" ] && [ "$rulesetId" != "null" ]; then
+    getTfImport "cloudflare_ruleset" "waf_managed_overrides" "zone/$cfZoneId/$rulesetId"
+    getTfConfig waf-managed-overrides-$cfZoneId.tf
+  fi
+}
+
+function getDdosL7Overrides() {
+  echo "Fetching DDoS L7 (HTTP/HTTPS) override rules..."
+  # Get the ruleset ID for Layer 7 DDoS overrides
+  rulesetId=$(fetchApi "zones/$cfZoneId/rulesets/phases/ddos_l7/entrypoint" \
+    | jq -r '.result.id')
+  if [ -n "$rulesetId" ] && [ "$rulesetId" != "null" ]; then
+    getTfImport "cloudflare_ruleset" "ddos_l7_overrides" "zone/$cfZoneId/$rulesetId"
+    getTfConfig ddos-l7-overrides-$cfZoneId.tf
+  fi
+}
+
+function getDdosL4Overrides() {
+  echo "Fetching DDoS L4 (Network) override rules..."
+  # Get the ruleset ID for Layer 4 DDoS overrides
+  rulesetId=$(fetchApi "accounts/$cfAccountId/rulesets/phases/ddos_l4/entrypoint" \
+    | jq -r '.result.id')
+  if [ -n "$rulesetId" ] && [ "$rulesetId" != "null" ]; then
+    getTfImport "cloudflare_ruleset" "ddos_l4_overrides" "account/$cfAccountId/$rulesetId"
+    getTfConfig ddos-l4-overrides-$cfAccountId.tf
   fi
 }
 
@@ -577,20 +598,18 @@ EOF
   getResponseHeaderRules
   getCompressionRules
   getPageRules
+  getDdosL4Overrides
+  getDdosL7Overrides
+  getWafManagedRulesetOverrides
   #getTunnels
   #getLbPools
   #getLbMonitors
   #getLoadBalancers
   #getHealthchecks
-  #getCertificates
 
   echo "===== PLAN ====="
   terraform plan -out=plan.bin
   # terraform apply plan.bin
-
-  echo ""
-  echo "===== VERIFYING STATE ====="
-  terraform plan
 
 }
 
