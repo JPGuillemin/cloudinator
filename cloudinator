@@ -5,8 +5,6 @@ export API="https://api.cloudflare.com/client/v4"
 #######################################
 # DEFAULTS
 #######################################
-export pluginsDir="$(pwd)/plugins"
-export outDirectory="$(pwd)/cf-$flagName-$(date +%Y%m%d)"
 
 export cfApiToken=""
 export cfAccountId=""
@@ -25,14 +23,20 @@ ______________________________________________________________________________
 Usage: $0 [OPTIONS]
 
 Options:
-  dump                      Dump configuration to JSON files
+
   terraform                 Generate Terraform configuration files
-  resources                 List active resource plugins
   --name <flag_name>        Config flag name (used for output directory)
   --account <account_id>    Cloudflare account ID (REQUIRED)
   --zone <zone_id>          Limit dump to a specific zone (REQUIRED by terraform command)
   --token <api_token>       Cloudflare API token (REQUIRED)
+
+  resource                  List active resource plugins
+  --enable                  Select a resource plugin to enable
+  --disable                 Select a resource plugin to disable
+
+  dump                      Dump configuration to JSON files
   --merge                   Create ONE big JSON
+
   --help                    Show this help
 
 Examples:
@@ -49,15 +53,23 @@ EOF
 while [[ $# -gt 0 ]]; do
   case "$1" in
     terraform)
-      command="${command}T"
+      command="T"
       shift
       ;;
     dump)
-      command="${command}D"
+      command="D"
       shift
       ;;
-    resources)
-      command="${command}R"
+    resource)
+      command="R"
+      shift
+      ;;
+    --enable)
+      command="${command}e"
+      shift
+      ;;
+    --disable)
+      command="${command}d"
       shift
       ;;
     --name)
@@ -91,17 +103,50 @@ while [[ $# -gt 0 ]]; do
 done
 
 [[ -z "$flagName" ]] && flagName="Cloudinator"
-
-
+export pluginsDir="$(pwd)/plugins"
+export outDirectory="$(pwd)/cf-$flagName-$(date +%Y%m%d)"
 
 #######################################
 # INITIALIZATION
 #######################################
 
-if [[ -z "$cfApiToken" ]]; then
-  echo "ERROR: --token is required"
-  exit 1
-fi
+function checkTfDependencies {
+  if [[ -z "$cfApiToken" ]]; then
+    echo "ERROR: --token is required"
+    exit 1
+  fi
+  if [[ ! "$(which terraform)" ]]; then
+    echo "ERROR: Please install Terraform !"
+    exit 1
+  fi
+  if [[ ! "$(which jq)" ]]; then
+    echo "ERROR: Please install jq !"
+    exit 1
+  fi
+  if [[ -z "$cfZoneId" ]]; then
+    echo "ERROR: --zone is required for terraform"
+    exit 1
+  fi
+  if [[ -z "$cfAccountId" ]]; then
+    echo "ERROR: --account is required"
+    exit 1
+  fi
+}
+
+function checkDependencies {
+  if [[ -z "$cfApiToken" ]]; then
+    echo "ERROR: --token is required"
+    exit 1
+  fi
+  if [[ ! "$(which jq)" ]]; then
+    echo "ERROR: Please install jq !"
+    exit 1
+  fi
+  if [[ -z "$cfAccountId" ]]; then
+    echo "ERROR: --account is required"
+    exit 1
+  fi
+}
 
 # rm -rf "$outDirectory"
 mkdir -p "$outDirectory"
@@ -117,11 +162,6 @@ export -f fetchApi
 # ACCOUNT DUMP
 #######################################
 function dumpAccount() {
-
-  if [[ -z "$cfAccountId" ]]; then
-    echo "ERROR: --account is required"
-    exit 1
-  fi
 
   echo "===== ACCOUNT LEVEL DUMP ====="
 
@@ -152,11 +192,6 @@ function dumpAccount() {
 #######################################
 
 function dumpZones() {
-
-  if [[ ! "$(which jq)" ]]; then
-    echo "ERROR: Please install jq ! boudiou !"
-    exit 1
-  fi
 
   echo "===== ZONES DUMP ====="
 
@@ -337,25 +372,42 @@ function catResourcePlugins() {(
     done
 )}
 
+# Disable source 
+disableResourcePlugin(){(
+  cd $pluginsDir
+  resourcesList=$(ls *)
+
+	if [[ "$resourcesList" != "" ]] ; then
+		echo 'Which remote do you want to disable? :'
+		select resource in $resourcesList exit ; do 
+			[[ "$resource" == 'exit' ]] && exit 0
+			mv -f "$resource" ".$resource"
+			break
+		done
+		echo "$resource has been disabled"
+	fi
+)}
+
+# Enable remote 
+enableResourcePlugin(){(
+  cd $pluginsDir
+  resourcesList=$(ls .??*) 
+
+	if [[ "$resourcesList" ]] ; then
+		echo 'Which remote do you want to enable? :'
+		select resource in $resourcesList exit ; do 
+			[[ "$resource" == 'exit' ]] && exit 0
+			mv -f "$resource" "${resource#.}"
+			break
+		done
+		echo "$resource has been enabled"
+	fi
+)}
+
 
 function createTerraform() {
 
-  if [[ ! "$(which terraform)" ]]; then
-    echo "ERROR: Please install Terraform ! boudiou !"
-    exit 1
-  fi
-  if [[ ! "$(which jq)" ]]; then
-    echo "ERROR: Please install jq ! boudiou !"
-    exit 1
-  fi
-  if [[ -z "$cfZoneId" ]]; then
-    echo "ERROR: --zone is required for terraform"
-    exit 1
-  fi
-  if [[ -z "$cfAccountId" ]]; then
-    echo "ERROR: --account is required for terraform"
-    exit 1
-  fi
+  checkTfDependencies
 
   echo "===== GENERATING TERRAFORM ====="
   export CLOUDFLARE_API_TOKEN=$cfApiToken
@@ -388,16 +440,24 @@ EOF
 }
 
 case "$command" in
-  *D*)
+  D)
+    checkDependencies
     dumpAccount
     dumpZones
     [[ "$merge" == "true" ]] && mergeConfig
     ;;
-  *T*)
+  T)
+    checkTfDependencies
     createTerraform
     ;;
-  *R*)
+  R)
     catResourcePlugins
+    ;;
+  *Re*)
+    enableResourcePlugin
+    ;;
+  *Rd*)
+    disableResourcePlugin
     ;;
   *)
     echo "No command specified"
