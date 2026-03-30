@@ -1,0 +1,9 @@
+echo "Fetching page rules..."
+result=$(fetchApi "zones/$cfZoneId/pagerules")
+if echo "$result" | jq -e '.result[]' > /dev/null 2>&1; then
+  echo "$result" | jq -r '.result[] | .id' \
+    | while read id; do
+        getTfImport "cloudflare_page_rule" "pagerule_$id" "$cfZoneId/$id"
+      done
+  getTfConfig page-rules-$cfZoneId.tf
+fi

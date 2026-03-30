@@ -1,0 +1,7 @@
+echo "Fetching compression ruleset..."
+rulesetId=$(fetchApi "zones/$cfZoneId/rulesets/phases/http_response_compression/entrypoint" \
+  | jq -r '.result.id')
+if [ -n "$rulesetId" ] && [ "$rulesetId" != "null" ]; then
+  getTfImport "cloudflare_ruleset" "compression_rules" "zone/$cfZoneId/$rulesetId"
+  getTfConfig compression-rules-$cfZoneId.tf
+fi

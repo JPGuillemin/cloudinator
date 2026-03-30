@@ -1,0 +1,7 @@
+echo "Fetching WAF custom ruleset..."
+rulesetId=$(fetchApi "zones/$cfZoneId/rulesets/phases/http_request_firewall_custom/entrypoint" \
+  | jq -r '.result.id')
+if [ -n "$rulesetId" ] && [ "$rulesetId" != "null" ]; then
+  getTfImport "cloudflare_ruleset" "waf_custom_rules" "zone/$cfZoneId/$rulesetId"
+  getTfConfig waf-custom-rules-$cfZoneId.tf
+fi

@@ -1,0 +1,7 @@
+echo "Fetching response header modification ruleset..."
+rulesetId=$(fetchApi "zones/$cfZoneId/rulesets/phases/http_response_headers_transform/entrypoint" \
+  | jq -r '.result.id')
+if [ -n "$rulesetId" ] && [ "$rulesetId" != "null" ]; then
+  getTfImport "cloudflare_ruleset" "response_header_rules" "zone/$cfZoneId/$rulesetId"
+  getTfConfig response-header-rules-$cfZoneId.tf
+fi

@@ -1,0 +1,7 @@
+echo "Fetching origin ruleset..."
+rulesetId=$(fetchApi "zones/$cfZoneId/rulesets/phases/http_request_origin/entrypoint" \
+  | jq -r '.result.id')
+if [ -n "$rulesetId" ] && [ "$rulesetId" != "null" ]; then
+  getTfImport "cloudflare_ruleset" "origin_rules" "zone/$cfZoneId/$rulesetId"
+  getTfConfig origin-rules-$cfZoneId.tf
+fi

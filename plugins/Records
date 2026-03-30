@@ -1,0 +1,18 @@
+# ── DNS records ─────────────────────────────────────────────────────────────
+echo "Fetching DNS records..."
+fetchApi "zones/$cfZoneId/dns_records?per_page=5000" \
+  | jq -r '.result[] | .id' \
+  | while read id; do
+      getTfImport "cloudflare_record" "record_$id" "$cfZoneId/$id"
+    done
+fetchApi "zones/$cfZoneId/dns_records?per_page=5000" | \
+jq -r --arg zone_id "$cfZoneId" '
+.result | to_entries | .[] |
+"resource \"cloudflare_record\" \"record_\(.value.id)\" {
+  content = \"\(.value.content)\"
+  name    = \"\(.value.name | split(".")[0])\"
+  proxied = \(.value.proxied)
+  ttl     = \(.value.ttl)
+  type    = \"\(.value.type)\"
+  zone_id = \"\($zone_id)\"
+}"' > dns-records-$cfZoneId.tf

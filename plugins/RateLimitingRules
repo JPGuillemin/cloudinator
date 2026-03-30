@@ -1,0 +1,7 @@
+echo "Fetching rate limiting ruleset..."
+rulesetId=$(fetchApi "zones/$cfZoneId/rulesets/phases/http_ratelimit/entrypoint" \
+  | jq -r '.result.id')
+if [ -n "$rulesetId" ] && [ "$rulesetId" != "null" ]; then
+  getTfImport "cloudflare_ruleset" "rate_limiting_rules" "zone/$cfZoneId/$rulesetId"
+  getTfConfig rate-limiting-rules-$cfZoneId.tf
+fi

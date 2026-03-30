@@ -1,0 +1,7 @@
+echo "Fetching URL rewrite ruleset..."
+rulesetId=$(fetchApi "zones/$cfZoneId/rulesets/phases/http_request_transform/entrypoint" \
+  | jq -r '.result.id')
+if [ -n "$rulesetId" ] && [ "$rulesetId" != "null" ]; then
+  getTfImport "cloudflare_ruleset" "rewrite_rules" "zone/$cfZoneId/$rulesetId"
+  getTfConfig rewrite-rules-$cfZoneId.tf
+fi

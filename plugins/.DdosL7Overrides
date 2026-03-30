@@ -1,0 +1,8 @@
+echo "Fetching DDoS L7 (HTTP/HTTPS) override rules..."
+# Get the ruleset ID for Layer 7 DDoS overrides
+rulesetId=$(fetchApi "zones/$cfZoneId/rulesets/phases/ddos_l7/entrypoint" \
+  | jq -r '.result.id')
+if [ -n "$rulesetId" ] && [ "$rulesetId" != "null" ]; then
+  getTfImport "cloudflare_ruleset" "ddos_l7_overrides" "zone/$cfZoneId/$rulesetId"
+  getTfConfig ddos-l7-overrides-$cfZoneId.tf
+fi

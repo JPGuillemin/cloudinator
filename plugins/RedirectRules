@@ -1,0 +1,7 @@
+echo "Fetching redirect ruleset..."
+rulesetId=$(fetchApi "zones/$cfZoneId/rulesets/phases/http_request_dynamic_redirect/entrypoint" \
+  | jq -r '.result.id')
+if [ -n "$rulesetId" ] && [ "$rulesetId" != "null" ]; then
+  getTfImport "cloudflare_ruleset" "redirect_rules" "zone/$cfZoneId/$rulesetId"
+  getTfConfig redirect-rules-$cfZoneId.tf
+fi

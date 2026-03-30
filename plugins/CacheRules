@@ -1,0 +1,7 @@
+echo "Fetching cache ruleset..."
+rulesetId=$(fetchApi "zones/$cfZoneId/rulesets/phases/http_request_cache_settings/entrypoint" \
+  | jq -r '.result.id')
+if [ -n "$rulesetId" ] && [ "$rulesetId" != "null" ]; then
+  getTfImport "cloudflare_ruleset" "cache_rules" "zone/$cfZoneId/$rulesetId"
+  getTfConfig cache-rules-$cfZoneId.tf
+fi

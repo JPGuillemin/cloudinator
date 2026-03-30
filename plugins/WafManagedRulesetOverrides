@@ -1,0 +1,8 @@
+echo "Fetching WAF managed ruleset overrides (OWASP & Cloudflare Managed)..."
+# Get the ruleset ID for managed WAF overrides
+rulesetId=$(fetchApi "zones/$cfZoneId/rulesets/phases/http_request_firewall_managed/entrypoint" \
+  | jq -r '.result.id')
+if [ -n "$rulesetId" ] && [ "$rulesetId" != "null" ]; then
+  getTfImport "cloudflare_ruleset" "waf_managed_overrides" "zone/$cfZoneId/$rulesetId"
+  getTfConfig waf-managed-overrides-$cfZoneId.tf
+fi

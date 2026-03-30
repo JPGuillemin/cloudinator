@@ -5,6 +5,9 @@ export API="https://api.cloudflare.com/client/v4"
 #######################################
 # DEFAULTS
 #######################################
+export pluginsDir="$(pwd)/plugins"
+export outDirectory="$(pwd)/cf-$flagName-$(date +%Y%m%d)"
+
 export cfApiToken=""
 export cfAccountId=""
 export flagName=""
@@ -24,9 +27,10 @@ Usage: $0 [OPTIONS]
 Options:
   dump                      Dump configuration to JSON files
   terraform                 Generate Terraform configuration files
+  resources                 List active resource plugins
   --name <flag_name>        Config flag name (used for output directory)
   --account <account_id>    Cloudflare account ID (REQUIRED)
-  --zone <zone_id>          Limit dump to a specific zone (REQUIRED for Terraform)
+  --zone <zone_id>          Limit dump to a specific zone (REQUIRED by terraform command)
   --token <api_token>       Cloudflare API token (REQUIRED)
   --merge                   Create ONE big JSON
   --help                    Show this help
@@ -50,6 +54,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     dump)
       command="${command}D"
+      shift
+      ;;
+    resources)
+      command="${command}R"
       shift
       ;;
     --name)
@@ -95,7 +103,6 @@ if [[ -z "$cfApiToken" ]]; then
   exit 1
 fi
 
-outDirectory="cf-$flagName-$(date +%Y%m%d)"
 # rm -rf "$outDirectory"
 mkdir -p "$outDirectory"
 
@@ -105,7 +112,7 @@ function fetchApi() {
        -H "Content-Type: application/json" \
        "${API}/${1}"
 }
-
+export -f fetchApi
 #######################################
 # ACCOUNT DUMP
 #######################################
@@ -309,242 +316,27 @@ import {
 }
 EOF
 }
+export -f getTfImport
 
 function getTfConfig() {
   local outTf=$1
   terraform plan -generate-config-out="$outTf" 2>&1 1>/dev/null
 }
+export -f getTfConfig
 
-function getRecords() {
-  # ── DNS records ─────────────────────────────────────────────────────────────
-  echo "Fetching DNS records..."
-  fetchApi "zones/$cfZoneId/dns_records?per_page=5000" \
-    | jq -r '.result[] | .id' \
-    | while read id; do
-        getTfImport "cloudflare_record" "record_$id" "$cfZoneId/$id"
-      done
-  fetchApi "zones/$cfZoneId/dns_records?per_page=5000" | \
-  jq -r --arg zone_id "$cfZoneId" '
-  .result | to_entries | .[] |
-"resource \"cloudflare_record\" \"record_\(.value.id)\" {
-  content = \"\(.value.content)\"
-  name    = \"\(.value.name | split(".")[0])\"
-  proxied = \(.value.proxied)
-  ttl     = \(.value.ttl)
-  type    = \"\(.value.type)\"
-  zone_id = \"\($zone_id)\"
-}"' > dns-records-$cfZoneId.tf
+function execResourcePlugins() {
+  for plugin in $(ls "$pluginsDir"/*) ; do
+    bash "$plugin"
+  done
 }
 
-function getWafCustomRules() {
-  echo "Fetching WAF custom ruleset..."
-  rulesetId=$(fetchApi "zones/$cfZoneId/rulesets/phases/http_request_firewall_custom/entrypoint" \
-    | jq -r '.result.id')
-  if [ -n "$rulesetId" ] && [ "$rulesetId" != "null" ]; then
-    getTfImport "cloudflare_ruleset" "waf_custom_rules" "zone/$cfZoneId/$rulesetId"
-    getTfConfig waf-custom-rules-$cfZoneId.tf
-  fi
-}
+function catResourcePlugins() {(
+  cd $pluginsDir
+    for plugin in $(ls *) ; do
+      echo "$plugin"
+    done
+)}
 
-function getRewriteRules() {
-  echo "Fetching URL rewrite ruleset..."
-  rulesetId=$(fetchApi "zones/$cfZoneId/rulesets/phases/http_request_transform/entrypoint" \
-    | jq -r '.result.id')
-  if [ -n "$rulesetId" ] && [ "$rulesetId" != "null" ]; then
-    getTfImport "cloudflare_ruleset" "rewrite_rules" "zone/$cfZoneId/$rulesetId"
-    getTfConfig rewrite-rules-$cfZoneId.tf
-  fi
-}
-
-function getRedirectRules() {
-  echo "Fetching redirect ruleset..."
-  rulesetId=$(fetchApi "zones/$cfZoneId/rulesets/phases/http_request_dynamic_redirect/entrypoint" \
-    | jq -r '.result.id')
-  if [ -n "$rulesetId" ] && [ "$rulesetId" != "null" ]; then
-    getTfImport "cloudflare_ruleset" "redirect_rules" "zone/$cfZoneId/$rulesetId"
-    getTfConfig redirect-rules-$cfZoneId.tf
-  fi
-}
-
-function getRateLimitingRules() {
-  echo "Fetching rate limiting ruleset..."
-  rulesetId=$(fetchApi "zones/$cfZoneId/rulesets/phases/http_ratelimit/entrypoint" \
-    | jq -r '.result.id')
-  if [ -n "$rulesetId" ] && [ "$rulesetId" != "null" ]; then
-    getTfImport "cloudflare_ruleset" "rate_limiting_rules" "zone/$cfZoneId/$rulesetId"
-    getTfConfig rate-limiting-rules-$cfZoneId.tf
-  fi
-}
-
-function getConfigurationRules() {
-  echo "Fetching configuration ruleset..."
-  rulesetId=$(fetchApi "zones/$cfZoneId/rulesets/phases/http_config_settings/entrypoint" \
-    | jq -r '.result.id')
-  if [ -n "$rulesetId" ] && [ "$rulesetId" != "null" ]; then
-    getTfImport "cloudflare_ruleset" "configuration_rules" "zone/$cfZoneId/$rulesetId"
-    getTfConfig configuration-rules-$cfZoneId.tf
-  fi
-}
-
-function getOriginRules() {
-  echo "Fetching origin ruleset..."
-  rulesetId=$(fetchApi "zones/$cfZoneId/rulesets/phases/http_request_origin/entrypoint" \
-    | jq -r '.result.id')
-  if [ -n "$rulesetId" ] && [ "$rulesetId" != "null" ]; then
-    getTfImport "cloudflare_ruleset" "origin_rules" "zone/$cfZoneId/$rulesetId"
-    getTfConfig origin-rules-$cfZoneId.tf
-  fi
-}
-
-function getCacheRules() {
-  echo "Fetching cache ruleset..."
-  rulesetId=$(fetchApi "zones/$cfZoneId/rulesets/phases/http_request_cache_settings/entrypoint" \
-    | jq -r '.result.id')
-  if [ -n "$rulesetId" ] && [ "$rulesetId" != "null" ]; then
-    getTfImport "cloudflare_ruleset" "cache_rules" "zone/$cfZoneId/$rulesetId"
-    getTfConfig cache-rules-$cfZoneId.tf
-  fi
-}
-
-function getResponseHeaderRules() {
-  echo "Fetching response header modification ruleset..."
-  rulesetId=$(fetchApi "zones/$cfZoneId/rulesets/phases/http_response_headers_transform/entrypoint" \
-    | jq -r '.result.id')
-  if [ -n "$rulesetId" ] && [ "$rulesetId" != "null" ]; then
-    getTfImport "cloudflare_ruleset" "response_header_rules" "zone/$cfZoneId/$rulesetId"
-    getTfConfig response-header-rules-$cfZoneId.tf
-  fi
-}
-
-function getCompressionRules() {
-  echo "Fetching compression ruleset..."
-  rulesetId=$(fetchApi "zones/$cfZoneId/rulesets/phases/http_response_compression/entrypoint" \
-    | jq -r '.result.id')
-  if [ -n "$rulesetId" ] && [ "$rulesetId" != "null" ]; then
-    getTfImport "cloudflare_ruleset" "compression_rules" "zone/$cfZoneId/$rulesetId"
-    getTfConfig compression-rules-$cfZoneId.tf
-  fi
-}
-
-function getLoadBalancers() {
-  echo "Fetching load balancers..."
-  result=$(fetchApi "zones/$cfZoneId/load_balancers")
-  if echo "$result" | jq -e '.result[]' > /dev/null 2>&1; then
-    echo "$result" | jq -r '.result[] | .id' \
-      | while read id; do
-          getTfImport "cloudflare_load_balancer" "lb_$id" "$cfZoneId/$id"
-        done
-    getTfConfig load-balancers-$cfZoneId.tf
-    sed -i '/ttl.*= 0$/d' load-balancers-$cfZoneId.tf
-  fi
-}
-
-function getLbPools() {
-  echo "Fetching LB pools..."
-  result=$(fetchApi "accounts/$cfAccountId/load_balancers/pools")
-  if echo "$result" | jq -e '.result[]' > /dev/null 2>&1; then
-    echo "$result" | jq -r '.result[] | .id' \
-      | while read id; do
-          getTfImport "cloudflare_load_balancer_pool" "pool_$id" "$cfAccountId/$id"
-        done
-    getTfConfig load-balancers-pools-$cfAccountId.tf
-  fi
-}
-
-function getLbMonitors() {
-  echo "Fetching LB monitors..."
-  result=$(fetchApi "accounts/$cfAccountId/load_balancers/monitors")
-  if echo "$result" | jq -e '.result[]' > /dev/null 2>&1; then
-    echo "$result" | jq -r '.result[] | .id' \
-      | while read id; do
-          getTfImport "cloudflare_load_balancer_monitor" "monitor_$id" "$cfAccountId/$id"
-        done
-    getTfConfig load-balancers-monitors-$cfAccountId.tf
-  fi
-}
-
-function getHealthchecks() {
-  echo "Fetching healthchecks..."
-  result=$(fetchApi "zones/$cfZoneId/healthchecks")
-  if echo "$result" | jq -e '.result[]' > /dev/null 2>&1; then
-    echo "$result" | jq -r '.result[] | .id' \
-      | while read id; do
-          getTfImport "cloudflare_healthcheck" "healthcheck_$id" "$cfZoneId/$id"
-        done
-    getTfConfig healthchecks-$cfZoneId.tf
-  fi
-}
-
-function getTunnels() {
-  echo "Fetching tunnel configs..."
-  result=$(fetchApi "accounts/$cfAccountId/cfd_tunnel?per_page=50")
-  if echo "$result" | jq -e '.result[]' > /dev/null 2>&1; then
-    echo "$result" | jq -r '.result[] | .id' \
-      | while read id; do
-          getTfImport "cloudflare_zero_trust_tunnel_cloudflared_config" "tunnel_config_$id" "$cfAccountId/$id"
-        done
-    getTfConfig tunnels-$cfAccountId.tf
-    sed -i '/^  config {$/,/^  }$/ { /warp_routing {/i\    ingress_rule {\n      service  = "http_status:503"\n    }
-  }' tunnels-$cfAccountId.tf
-  fi
-}
-
-function getPageRules() {
-  echo "Fetching page rules..."
-  result=$(fetchApi "zones/$cfZoneId/pagerules")
-  if echo "$result" | jq -e '.result[]' > /dev/null 2>&1; then
-    echo "$result" | jq -r '.result[] | .id' \
-      | while read id; do
-          getTfImport "cloudflare_page_rule" "pagerule_$id" "$cfZoneId/$id"
-        done
-    getTfConfig page-rules-$cfZoneId.tf
-  fi
-}
-
-function getWorkerRoutes() {
-  echo "Fetching worker routes..."
-  result=$(fetchApi "zones/$cfZoneId/workers/routes")
-  if echo "$result" | jq -e '.result[]' > /dev/null 2>&1; then
-    echo "$result" | jq -r '.result[] | .id' \
-      | while read id; do
-          getTfImport "cloudflare_worker_route" "worker_route_$id" "$cfZoneId/$id"
-        done
-    getTfConfig worker-routes-$cfZoneId.tf
-  fi
-}
-
-function getWafManagedRulesetOverrides() {
-  echo "Fetching WAF managed ruleset overrides (OWASP & Cloudflare Managed)..."
-  # Get the ruleset ID for managed WAF overrides
-  rulesetId=$(fetchApi "zones/$cfZoneId/rulesets/phases/http_request_firewall_managed/entrypoint" \
-    | jq -r '.result.id')
-  if [ -n "$rulesetId" ] && [ "$rulesetId" != "null" ]; then
-    getTfImport "cloudflare_ruleset" "waf_managed_overrides" "zone/$cfZoneId/$rulesetId"
-    getTfConfig waf-managed-overrides-$cfZoneId.tf
-  fi
-}
-
-function getDdosL7Overrides() {
-  echo "Fetching DDoS L7 (HTTP/HTTPS) override rules..."
-  # Get the ruleset ID for Layer 7 DDoS overrides
-  rulesetId=$(fetchApi "zones/$cfZoneId/rulesets/phases/ddos_l7/entrypoint" \
-    | jq -r '.result.id')
-  if [ -n "$rulesetId" ] && [ "$rulesetId" != "null" ]; then
-    getTfImport "cloudflare_ruleset" "ddos_l7_overrides" "zone/$cfZoneId/$rulesetId"
-    getTfConfig ddos-l7-overrides-$cfZoneId.tf
-  fi
-}
-
-function getDdosL4Overrides() {
-  echo "Fetching DDoS L4 (Network) override rules..."
-  # Get the ruleset ID for Layer 4 DDoS overrides
-  rulesetId=$(fetchApi "accounts/$cfAccountId/rulesets/phases/ddos_l4/entrypoint" \
-    | jq -r '.result.id')
-  if [ -n "$rulesetId" ] && [ "$rulesetId" != "null" ]; then
-    getTfImport "cloudflare_ruleset" "ddos_l4_overrides" "account/$cfAccountId/$rulesetId"
-    getTfConfig ddos-l4-overrides-$cfAccountId.tf
-  fi
-}
 
 function createTerraform() {
 
@@ -587,25 +379,7 @@ EOF
   terraform init
   # ── Generate HCL + state ──────────────────────────────────────────────────────
   echo "===== FETCHING RESOURCES ====="
-  getRecords
-  getWafCustomRules
-  getRewriteRules
-  getRedirectRules
-  getRateLimitingRules
-  getConfigurationRules
-  getOriginRules
-  getCacheRules
-  getResponseHeaderRules
-  getCompressionRules
-  getPageRules
-  getDdosL4Overrides
-  getDdosL7Overrides
-  getWafManagedRulesetOverrides
-  #getTunnels
-  #getLbPools
-  #getLbMonitors
-  #getLoadBalancers
-  #getHealthchecks
+  execResourcePlugins
 
   echo "===== PLAN ====="
   terraform plan -out=plan.bin
@@ -621,6 +395,9 @@ case "$command" in
     ;;
   *T*)
     createTerraform
+    ;;
+  *R*)
+    catResourcePlugins
     ;;
   *)
     echo "No command specified"

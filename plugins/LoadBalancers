@@ -1,0 +1,10 @@
+echo "Fetching load balancers..."
+result=$(fetchApi "zones/$cfZoneId/load_balancers")
+if echo "$result" | jq -e '.result[]' > /dev/null 2>&1; then
+  echo "$result" | jq -r '.result[] | .id' \
+    | while read id; do
+        getTfImport "cloudflare_load_balancer" "lb_$id" "$cfZoneId/$id"
+      done
+  getTfConfig load-balancers-$cfZoneId.tf
+  sed -i '/ttl.*= 0$/d' load-balancers-$cfZoneId.tf
+fi

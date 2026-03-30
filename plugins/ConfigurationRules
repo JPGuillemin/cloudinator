@@ -1,0 +1,7 @@
+echo "Fetching configuration ruleset..."
+rulesetId=$(fetchApi "zones/$cfZoneId/rulesets/phases/http_config_settings/entrypoint" \
+  | jq -r '.result.id')
+if [ -n "$rulesetId" ] && [ "$rulesetId" != "null" ]; then
+  getTfImport "cloudflare_ruleset" "configuration_rules" "zone/$cfZoneId/$rulesetId"
+  getTfConfig configuration-rules-$cfZoneId.tf
+fi

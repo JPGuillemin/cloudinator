@@ -1,0 +1,8 @@
+echo "Fetching DDoS L4 (Network) override rules..."
+# Get the ruleset ID for Layer 4 DDoS overrides
+rulesetId=$(fetchApi "accounts/$cfAccountId/rulesets/phases/ddos_l4/entrypoint" \
+  | jq -r '.result.id')
+if [ -n "$rulesetId" ] && [ "$rulesetId" != "null" ]; then
+  getTfImport "cloudflare_ruleset" "ddos_l4_overrides" "account/$cfAccountId/$rulesetId"
+  getTfConfig ddos-l4-overrides-$cfAccountId.tf
+fi

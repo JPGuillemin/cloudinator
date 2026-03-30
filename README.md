@@ -1,127 +1,37 @@
 # Cloudinator
-Cloudinator dumps Cloudflare config into JSON or TERRAFORM
 
-Cloudinator is a tool that exports a full **Cloudflare account and zone configuration** and optionally converts it into **Terraform-managed infrastructure**.
-
-It allows you to:
-
-* Dump Cloudflare configuration to JSON
-* Merge everything into a single JSON snapshot
-* Generate Terraform configuration and state from existing infrastructure
-* Safely migrate Cloudflare setups into Infrastructure-as-Code
-
-Typical use cases:
-
-* Cloudflare configuration backup
-* Terraform migration
-* Security auditing
-* Infrastructure documentation
+**Cloudinator** is a CLI tool that exports your full Cloudflare configuration to JSON and/or Terraform — useful for backups, audits, and Infrastructure-as-Code migrations.
 
 ---
 
-# Features
+## Features
 
-## Account-level export
-
-Cloudinator retrieves:
-
-* Account information
-* Account rulesets
-* Workers scripts
-* Workers KV namespaces
-* Zero Trust tunnels
-* Access applications
-* Access policies
-* Load balancer pools
-* Load balancer monitors
+| Feature | Description |
+|---|---|
+| 📦 JSON dump | Export account & zone config to structured JSON files |
+| 🔀 Merge mode | Combine all exports into a single `cloudflare_full_config.json` |
+| 🏗️ Terraform generation | Auto-generate HCL config and import blocks from live infrastructure |
+| 🔌 Plugin system | Extensible resource plugins under `./plugins/` |
 
 ---
 
-## Zone-level export
+## Requirements
 
-For each zone:
+- `bash`
+- `curl`
+- `jq`
+- `terraform` *(Terraform mode only)*
 
-* Zone configuration
-* DNS records
-* Zone settings
-* Page rules
-* Firewall rules
-* Access rules
-* User-Agent rules
-* Bot management settings
-* Workers routes
-* Load balancers
-* Rulesets
-
----
-
-## JSON merge mode
-
-Optional **single file export** containing the entire Cloudflare configuration.
-
-```
-cloudflare_full_config.json
-```
-
-Useful for:
-
-* Backups
-* Configuration diffing
-* Security audits
-
----
-
-## Terraform generation
-
-Cloudinator can automatically:
-
-1. Generate Terraform import blocks
-2. Import existing Cloudflare resources
-3. Generate HCL configuration
-4. Build Terraform state
-
-Supported resources:
-
-* DNS records
-* Rulesets
-* Load balancers
-* Load balancer pools
-* Load balancer monitors
-* Health checks
-* Certificate packs
-* Cloudflare tunnels
-* Page rules
-* Worker routes
-
----
-
-# Requirements
-
-Required dependancies:
-
-```
-bash
-curl
-jq
-terraform (required for terraform mode)
-```
-
-Install dependencies on Debian/Ubuntu:
-
+Install on Debian/Ubuntu:
 ```bash
 sudo apt install jq curl
 ```
 
-Install Terraform:
-
-https://developer.hashicorp.com/terraform/downloads
+Install Terraform: https://developer.hashicorp.com/terraform/downloads
 
 ---
 
-# Installation
-
-Clone the repository:
-
+## Installation
 ```bash
 git clone https://github.com/YOUR_USERNAME/cloudinator.git
 cd cloudinator
@@ -130,135 +40,56 @@ chmod +x cloudinator
 
 ---
 
-# Cloudflare API Token
+## Cloudflare API Token
 
-Create a **Cloudflare API token** with at least the following permissions.
+Create a token at https://dash.cloudflare.com/profile/api-tokens with the following permissions:
 
-Recommended permissions:
+**Account level:**
+- Workers Scripts: Read
+- Workers KV Storage: Read
+- Access: Read
+- Load Balancers: Read
+- Cloudflare Tunnel: Read
 
-```
-Account:
-  Workers Scripts: Read
-  Workers KV Storage: Read
-  Access: Read
-  Load Balancers: Read
-  Cloudflare Tunnel: Read
-
-Zone:
-  DNS: Read
-  Firewall: Read
-  Rulesets: Read
-  Workers Routes: Read
-  Page Rules: Read
-  Load Balancers: Read
-```
-
-Create the token here:
-
-https://dash.cloudflare.com/profile/api-tokens
+**Zone level:**
+- DNS: Read
+- Firewall: Read
+- Rulesets: Read
+- Workers Routes: Read
+- Page Rules: Read
+- Load Balancers: Read
 
 ---
 
-# Usage
+## Usage
+```
+./cloudinator [COMMAND] [OPTIONS]
+```
 
-```
-./cloudinator [command] [options]
-```
+### Commands
+
+| Command | Description |
+|---|---|
+| `dump` | Export account and zone configuration to JSON |
+| `terraform` | Generate Terraform configuration from existing infrastructure |
+| `resources` | List available resource plugins |
+
+### Options
+
+| Option | Description |
+|---|---|
+| `--name <name>` | Label used in the output directory name (default: `Cloudinator`) |
+| `--token <token>` | Cloudflare API token **(required)** |
+| `--account <id>` | Cloudflare account ID **(required for dump)** |
+| `--zone <id>` | Restrict to a specific zone (required for `terraform`) |
+| `--merge` | Combine all JSON output into one file |
+| `--help` | Show help |
 
 ---
 
-# Commands
+## Examples
 
-## Dump configuration
-
-Export account and zone configuration.
-
-```
-./cloudinator dump --token TOKEN --account ACCOUNT_ID
-```
-
-Example:
-
-```bash
-./cloudinator dump \
-  --name MyInfra \
-  --token CF_TOKEN \
-  --account ACCOUNT_ID
-```
-
-Output directory:
-
-```
-cf-MyInfra-YYYYMMDD/
-```
-
----
-
-## Dump a single zone
-
-```
-./cloudinator dump \
-  --token TOKEN \
-  --account ACCOUNT_ID \
-  --zone ZONE_ID
-```
-
----
-
-## Merge everything into one JSON
-
-```
-./cloudinator dump \
-  --token TOKEN \
-  --account ACCOUNT_ID \
-  --merge
-```
-
-Result file:
-
-```
-cloudflare_full_config.json
-```
-
----
-
-## Generate Terraform configuration
-
-```
-./cloudinator terraform \
-  --token TOKEN \
-  --account ACCOUNT_ID \
-  --zone ZONE_ID
-```
-
-Cloudinator will:
-
-1. Generate Terraform import blocks
-2. Import infrastructure
-3. Generate Terraform configuration
-4. Build Terraform state
-
-Output directory:
-
-```
-terraform/
-```
-
-Files generated:
-
-```
-main.tf
-generated-ZONEID.tf
-terraform.tfstate
-import.tf
-```
-
----
-
-# Example Workflow
-
-## 1. Dump configuration
-
+### Dump full account configuration
 ```bash
 ./cloudinator dump \
   --name Production \
@@ -266,8 +97,15 @@ import.tf
   --account ACCOUNT_ID
 ```
 
-## 2. Backup entire configuration
+### Dump a single zone
+```bash
+./cloudinator dump \
+  --token CF_TOKEN \
+  --account ACCOUNT_ID \
+  --zone ZONE_ID
+```
 
+### Merge everything into one JSON snapshot
 ```bash
 ./cloudinator dump \
   --token CF_TOKEN \
@@ -275,8 +113,7 @@ import.tf
   --merge
 ```
 
-## 3. Convert infrastructure to Terraform
-
+### Generate Terraform configuration
 ```bash
 ./cloudinator terraform \
   --token CF_TOKEN \
@@ -286,77 +123,120 @@ import.tf
 
 ---
 
-# Directory Structure Example
+## Output Structure
 
+### JSON dump (`cf-<name>-<date>/`)
 ```
-cf-Cloudinator-20260327/
+cf-Production-20260330/
+├── account.json
+├── account_rulesets.json
+├── workers_scripts.json
+├── workers_kv.json
+├── tunnels.json
+├── tunnels/
+│   ├── <tunnel-id>.json
+│   └── <tunnel-id>-config.json
+├── access_apps.json
+├── access_policies.json
+├── lb_monitors.json
+├── lb_pools.json
+├── zones.json
+├── zones/
+│   └── <zone-id>/
+│       ├── zone.json
+│       ├── settings.json
+│       ├── dns_records.json
+│       ├── page_rules.json
+│       ├── firewall_rules.json
+│       ├── access_rules.json
+│       ├── ua_rules.json
+│       ├── bot_management.json
+│       ├── workers_routes.json
+│       ├── load_balancers.json
+│       └── rulesets.json
+└── cloudflare_full_config.json   ← only with --merge
+```
 
-account.json
-account_rulesets.json
-workers_scripts.json
-workers_kv.json
-tunnels.json
-
-zones/
-  ZONE_ID/
-    zone.json
-    settings.json
-    dns_records.json
-    page_rules.json
-    firewall_rules.json
-    access_rules.json
-    ua_rules.json
-    bot_management.json
-    workers_routes.json
-    load_balancers.json
-    rulesets.json
+### Terraform output (`terraform/`)
+```
+terraform/
+├── main.tf
+├── import.tf
+├── plan.bin
+├── cache-rules-<zone-id>.tf
+├── configuration-rules-<zone-id>.tf
+├── dns-records-<zone-id>.tf
+├── healthchecks-<zone-id>.tf
+├── load-balancers-<zone-id>.tf
+├── load-balancers-monitors-<account-id>.tf
+├── load-balancers-pools-<account-id>.tf
+├── rate-limiting-rules-<zone-id>.tf
+├── response-header-rules-<zone-id>.tf
+├── tunnels-<account-id>.tf
+├── waf-custom-rules-<zone-id>.tf
+└── waf-managed-overrides-<zone-id>.tf
 ```
 
 ---
 
-# Security Notes
+## Plugin System
 
-Cloudinator **does not store API tokens** in exported files.
+Resource plugins live in `./plugins/`. Each plugin is a bash script responsible for generating Terraform import blocks and HCL configuration for a specific Cloudflare resource type.
 
-However exported data may contain:
-
-* Infrastructure metadata
-* Domain names
-* Security policies
-
-Avoid committing exported dumps to public repositories.
-
----
-
-# License
-
-GPL v2
-
-```
-Cloudinator
-Copyright (C) Jean-Philippe Guillemin
-
-This program is free software distributed under the GNU General Public License v2.
+List available plugins:
+```bash
+./cloudinator resources
 ```
 
+Current plugins:
+
+| Plugin | Resource |
+|---|---|
+| `CacheRules` | Cache Rules |
+| `CompressionRules` | Compression Rules |
+| `ConfigurationRules` | Configuration Rules |
+| `Healthchecks` | Health Checks |
+| `LbMonitors` | Load Balancer Monitors |
+| `LbPools` | Load Balancer Pools |
+| `LoadBalancers` | Load Balancers |
+| `OriginRules` | Origin Rules |
+| `PageRules` | Page Rules |
+| `RateLimitingRules` | Rate Limiting Rules |
+| `Records` | DNS Records |
+| `RedirectRules` | Redirect Rules |
+| `ResponseHeaderRules` | Response Header Rules |
+| `RewriteRules` | Rewrite Rules |
+| `Tunnels` | Cloudflare Tunnels |
+| `WafCustomRules` | WAF Custom Rules |
+| `WafManagedRulesetOverrides` | WAF Managed Ruleset Overrides |
+
 ---
 
-# Author
+## Security Notes
 
-Jean-Philippe Guillemin
+Cloudinator does **not** embed API tokens in any exported file. That said, exported data may contain sensitive infrastructure details (domain names, security policies, routing config). **Do not commit exports to public repositories.**
 
 ---
 
-# Contributions
+## License
 
-Pull requests and improvements are welcome.
+GPL v2 — Copyright © Jean-Philippe Guillemin
 
-Possible improvements:
+---
 
-* Support additional Cloudflare APIs
-* Terraform module generation
-* Improved pagination handling
-* Parallel API fetching
-* Configuration diff mode
-* Restore capability
+## Author
 
+Jean-Philippe Guillemin — hyp3ri0n@sfr.fr
+
+---
+
+## Contributing
+
+Pull requests welcome. Areas for improvement:
+
+- Additional Cloudflare API coverage
+- Terraform module generation
+- Pagination handling for large accounts
+- Parallel API fetching
+- Configuration diff / drift detection mode
+- Restore / apply capability
