@@ -6,10 +6,10 @@ export API="https://api.cloudflare.com/client/v4"
 # DEFAULTS
 #######################################
 
-export cfApiToken=""
-export cfAccountId=""
-export flagName=""
-export cfZoneId=""
+export cfApiToken="$CLOUDFLARE_API_TOKEN"
+export cfAccountId="$CLOUDFLARE_ACCOUNT_ID"
+export flagName="Cloudinator"
+export cfZoneId="$CLOUDFLARE_ZONE_ID"
 merge=""
 command=""
 
@@ -27,7 +27,7 @@ Options:
   terraform                 Generate Terraform configuration files
   --name <flag_name>        Config flag name (used for output directory)
   --account <account_id>    Cloudflare account ID (REQUIRED)
-  --zone <zone_id>          Limit dump to a specific zone (REQUIRED by terraform command)
+  --zone <zone_id>          Cloudflare zone ID (REQUIRED by terraform)
   --token <api_token>       Cloudflare API token (REQUIRED)
 
   resource                  List active resource plugins
@@ -40,9 +40,16 @@ Options:
   --help                    Show this help
 
 Examples:
+  $0 terraform --token XXX --zone ZZZ --account YYY
   $0 dump --name Metsys --token XXX --account YYY
-  $0 terraform --token XXX --zone ZZZ
   $0 dump --token XXX --account YYY --zone ZZZ
+  $0 resource --disable
+
+Environment variables:
+  \$CLOUDFLARE_API_TOKEN
+  \$CLOUDFLARE_ACCOUNT_ID
+  \$CLOUDFLARE_ZONE_ID
+
 EOF
   exit 1
 }
@@ -102,7 +109,6 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-[[ -z "$flagName" ]] && flagName="Cloudinator"
 export pluginsDir="$(pwd)/plugins"
 export outDirectory="$(pwd)/cf-$flagName-$(date +%Y%m%d)"
 
@@ -372,36 +378,36 @@ function catResourcePlugins() {(
     done
 )}
 
-# Disable source 
+# Disable source
 disableResourcePlugin(){(
-  cd $pluginsDir
+  cd "$pluginsDir"
   resourcesList=$(ls *)
 
-	if [[ "$resourcesList" != "" ]] ; then
-		echo 'Which remote do you want to disable? :'
-		select resource in $resourcesList exit ; do 
-			[[ "$resource" == 'exit' ]] && exit 0
-			mv -f "$resource" ".$resource"
-			break
-		done
-		echo "$resource has been disabled"
-	fi
+  if [[ "$resourcesList" != "" ]] ; then
+    echo 'Which resource do you want to disable? :'
+    select resource in $resourcesList exit ; do
+      [[ "$resource" == 'exit' ]] && exit 0
+      mv -f "$resource" ".$resource"
+      break
+    done
+    echo "$resource has been disabled"
+  fi
 )}
 
-# Enable remote 
+# Enable remote
 enableResourcePlugin(){(
-  cd $pluginsDir
-  resourcesList=$(ls .??*) 
+  cd "$pluginsDir"
+  resourcesList=$(ls .??*)
 
-	if [[ "$resourcesList" ]] ; then
-		echo 'Which remote do you want to enable? :'
-		select resource in $resourcesList exit ; do 
-			[[ "$resource" == 'exit' ]] && exit 0
-			mv -f "$resource" "${resource#.}"
-			break
-		done
-		echo "$resource has been enabled"
-	fi
+  if [[ "$resourcesList" ]] ; then
+    echo 'Which resource do you want to enable? :'
+    select resource in $resourcesList exit ; do
+      [[ "$resource" == 'exit' ]] && exit 0
+      mv -f "$resource" "${resource#.}"
+      break
+    done
+    echo "$resource has been enabled"
+  fi
 )}
 
 
